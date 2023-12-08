@@ -15,16 +15,13 @@ from sklearn import metrics
 import matplotlib.pyplot as plt
 import pandas as pd
 import h5py
-# from skchem.metrics import bedroc_score
 
-# newly added --------------
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 from absl import app
 from absl import flags
 from absl import logging
 FLAGS = flags.FLAGS
-# ----------------------------
 
 import pickle
 from decagon.deep.optimizer import DecagonOptimizer
@@ -37,7 +34,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 config = tf.compat.v1.ConfigProto()
-# config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
 np.random.seed(0)
@@ -103,47 +99,15 @@ def get_accuracy_scores(feed_dict, edges_pos, edges_neg, edge_type, placeholders
     roc_sc = metrics.roc_auc_score(labels_all, preds_all)
     aupr_sc = metrics.average_precision_score(labels_all, preds_all)
     apk_sc = rank_metrics.apk(actual, predicted, k=200)
-    # bedroc_sc = bedroc_score(labels_all, preds_all)
     if name!=None:
         with open(name, 'wb') as f:
             pickle.dump([labels_all, preds_all], f)
-    # ********* I add it to try plotting graphs ***************
     if return_preds:
         labels_all = np.hstack([np.ones(len(preds)), np.zeros(len(preds_neg))])
         preds_all = np.hstack([preds, preds_neg])
         return roc_sc, aupr_sc, apk_sc, labels_all, preds_all
-    # return roc_sc, aupr_sc, apk_sc, bedroc_sc
     return roc_sc, aupr_sc, apk_sc
 
-# ********* I add it to try plotting graphs ***************
-def plot_roc_pr_curves(labels, preds):
-    fpr, tpr, _ = metrics.roc_curve(labels, preds)
-    roc_auc = metrics.auc(fpr, tpr)
-
-    precision, recall, _ = metrics.precision_recall_curve(labels, preds)
-    pr_auc = metrics.average_precision_score(labels, preds)
-
-    plt.figure()
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic')
-    plt.legend(loc="lower right")
-    plt.show()
-
-    plt.figure()
-    plt.plot(recall, precision, color='blue', lw=2, label='PR curve (area = %0.2f)' % pr_auc)
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.ylim([0.0, 1.05])
-    plt.xlim([0.0, 1.0])
-    plt.title('Precision-Recall Curve')
-    plt.legend(loc="lower left")
-    plt.show()
-# ---------------------------------------------------------------
 
 def construct_placeholders(edge_types):
     placeholders = {
@@ -279,12 +243,6 @@ feat = {
 }
 
 edge_type2dim = {k: [adj.shape for adj in adjs] for k, adjs in adj_mats_orig.items()}
-# edge_type2decoder = {
-#     (0, 0): 'bilinear',
-#     (0, 1): 'bilinear',
-#     (1, 0): 'bilinear',
-#     (1, 1): 'bilinear',
-# }
 
 edge_type2decoder = {
     (0, 0): 'innerproduct',
@@ -368,13 +326,9 @@ def main(argv):
         dropout=FLAGS.dropout,
         placeholders=placeholders)
 
-    # temporarily removed bedroc
     roc_score, auprc_score, apk_score, labels_all, preds_all = get_accuracy_scores(feed_dict,
         minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3], 
         placeholders, minibatch, sess, opt, return_preds=True)
-    # roc_score, auprc_score, apk_score, bedroc = get_accuracy_scores(feed_dict,
-    #     minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3], 
-    #     placeholders, minibatch, sess, opt)
     
     plot_roc_pr_curves(labels_all, preds_all)
 
@@ -382,7 +336,6 @@ def main(argv):
     print("Edge type:", "%04d" % 3, "Test AUROC score", "{:.5f}".format(roc_score))
     print("Edge type:", "%04d" % 3, "Test AUPRC score", "{:.5f}".format(auprc_score))
     print("Edge type:", "%04d" % 3, "Test AP@k score", "{:.5f}".format(apk_score))
-    # print("Edge type:", "%04d" % 3, "Test BEDROC score", "{:.5f}".format(bedroc))
     print()
 
     prediction = get_prediction(feed_dict, placeholders, minibatch, sess, opt, 
