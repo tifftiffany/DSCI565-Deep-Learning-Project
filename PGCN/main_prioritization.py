@@ -15,13 +15,16 @@ from sklearn import metrics
 import matplotlib.pyplot as plt
 import pandas as pd
 import h5py
+# from skchem.metrics import bedroc_score
 
+# newly added --------------
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 from absl import app
 from absl import flags
 from absl import logging
 FLAGS = flags.FLAGS
+# ----------------------------
 
 import pickle
 from decagon.deep.optimizer import DecagonOptimizer
@@ -34,6 +37,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 config = tf.compat.v1.ConfigProto()
+# config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
 np.random.seed(0)
@@ -99,15 +103,47 @@ def get_accuracy_scores(feed_dict, edges_pos, edges_neg, edge_type, placeholders
     roc_sc = metrics.roc_auc_score(labels_all, preds_all)
     aupr_sc = metrics.average_precision_score(labels_all, preds_all)
     apk_sc = rank_metrics.apk(actual, predicted, k=200)
+    # bedroc_sc = bedroc_score(labels_all, preds_all)
     if name!=None:
         with open(name, 'wb') as f:
             pickle.dump([labels_all, preds_all], f)
+    # ********* I add it to try plotting graphs ***************
     if return_preds:
         labels_all = np.hstack([np.ones(len(preds)), np.zeros(len(preds_neg))])
         preds_all = np.hstack([preds, preds_neg])
         return roc_sc, aupr_sc, apk_sc, labels_all, preds_all
+    # return roc_sc, aupr_sc, apk_sc, bedroc_sc
     return roc_sc, aupr_sc, apk_sc
 
+# ********* I add it to try plotting graphs ***************
+def plot_roc_pr_curves(labels, preds):
+    fpr, tpr, _ = metrics.roc_curve(labels, preds)
+    roc_auc = metrics.auc(fpr, tpr)
+
+    precision, recall, _ = metrics.precision_recall_curve(labels, preds)
+    pr_auc = metrics.average_precision_score(labels, preds)
+
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    plt.show()
+
+    plt.figure()
+    plt.plot(recall, precision, color='blue', lw=2, label='PR curve (area = %0.2f)' % pr_auc)
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.ylim([0.0, 1.05])
+    plt.xlim([0.0, 1.0])
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc="lower left")
+    plt.show()
+# ---------------------------------------------------------------
 
 def construct_placeholders(edge_types):
     placeholders = {
@@ -243,6 +279,12 @@ feat = {
 }
 
 edge_type2dim = {k: [adj.shape for adj in adjs] for k, adjs in adj_mats_orig.items()}
+# edge_type2decoder = {
+#     (0, 0): 'bilinear',
+#     (0, 1): 'bilinear',
+#     (1, 0): 'bilinear',
+#     (1, 1): 'bilinear',
+# }
 
 edge_type2decoder = {
     (0, 0): 'innerproduct',
@@ -267,83 +309,93 @@ flags.DEFINE_integer('batch_size', 512, 'minibatch size.')
 flags.DEFINE_boolean('bias', True, 'Bias term.')
 
 def main(argv):
-    FLAGS = flags.FLAGS
-    FLAGS(argv)
-    logging.info('Negative sample size: %d', FLAGS.neg_sample_size)
-    logging.info('Learning rate: %f', FLAGS.learning_rate)
-    logging.info('Number of units in hidden layer 1: %d', FLAGS.hidden1)
-    logging.info('Number of units in hidden layer 2: %d', FLAGS.hidden2)
-    logging.info('Weight for L2 loss on embedding matrix: %f', FLAGS.weight_decay)
-    logging.info('Dropout rate (1 - keep probability): %f', FLAGS.dropout)
-    logging.info('Max margin parameter in hinge loss: %f', FLAGS.max_margin)
-    logging.info('Minibatch size: %d', FLAGS.batch_size)
-    logging.info('Bias term: %s', FLAGS.bias)
+    try:
+        FLAGS = flags.FLAGS
+        FLAGS(argv)
+        logging.info('Negative sample size: %d', FLAGS.neg_sample_size)
+        logging.info('Learning rate: %f', FLAGS.learning_rate)
+        logging.info('Number of units in hidden layer 1: %d', FLAGS.hidden1)
+        logging.info('Number of units in hidden layer 2: %d', FLAGS.hidden2)
+        logging.info('Weight for L2 loss on embedding matrix: %f', FLAGS.weight_decay)
+        logging.info('Dropout rate (1 - keep probability): %f', FLAGS.dropout)
+        logging.info('Max margin parameter in hinge loss: %f', FLAGS.max_margin)
+        logging.info('Minibatch size: %d', FLAGS.batch_size)
+        logging.info('Bias term: %s', FLAGS.bias)
 
-    print("Defining placeholders")
-    placeholders = construct_placeholders(edge_types)
+        print("Defining placeholders")
+        placeholders = construct_placeholders(edge_types)
 
-    print("Create minibatch iterator")
-    minibatch = EdgeMinibatchIterator(
-        adj_mats=adj_mats_orig,
-        feat=feat,
-        edge_types=edge_types,
-        batch_size=FLAGS.batch_size,
-        val_test_size=val_test_size
-    )
-
-    print("Create model")
-    model = DecagonModel(
-        placeholders=placeholders,
-        num_feat=num_feat,
-        nonzero_feat=nonzero_feat,
-        edge_types=edge_types,
-        decoders=edge_type2decoder,
-    )
-
-    print("Create optimizer")
-    with tf.name_scope('optimizer'):
-        opt = DecagonOptimizer(
-            embeddings=model.embeddings,
-            latent_inters=model.latent_inters,
-            latent_varies=model.latent_varies,
-            degrees=degrees,
+        print("Create minibatch iterator")
+        minibatch = EdgeMinibatchIterator(
+            adj_mats=adj_mats_orig,
+            feat=feat,
             edge_types=edge_types,
-            edge_type2dim=edge_type2dim,
-            placeholders=placeholders,
             batch_size=FLAGS.batch_size,
-            margin=FLAGS.max_margin
+            val_test_size=val_test_size
         )
 
-    print("Initialize session")
-    sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-    feed_dict = {}
-    saver = tf.train.Saver()
-    saver.restore(sess,'./model/model.ckpt')
-    feed_dict = minibatch.next_minibatch_feed_dict(placeholders=placeholders)
-    feed_dict = minibatch.update_feed_dict(
-        feed_dict=feed_dict,
-        dropout=FLAGS.dropout,
-        placeholders=placeholders)
+        print("Create model")
+        model = DecagonModel(
+            placeholders=placeholders,
+            num_feat=num_feat,
+            nonzero_feat=nonzero_feat,
+            edge_types=edge_types,
+            decoders=edge_type2decoder,
+        )
 
-    roc_score, auprc_score, apk_score, labels_all, preds_all = get_accuracy_scores(feed_dict,
-        minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3], 
-        placeholders, minibatch, sess, opt, return_preds=True)
+        print("Create optimizer")
+        with tf.name_scope('optimizer'):
+            opt = DecagonOptimizer(
+                embeddings=model.embeddings,
+                latent_inters=model.latent_inters,
+                latent_varies=model.latent_varies,
+                degrees=degrees,
+                edge_types=edge_types,
+                edge_type2dim=edge_type2dim,
+                placeholders=placeholders,
+                batch_size=FLAGS.batch_size,
+                margin=FLAGS.max_margin
+            )
+
+        print("Initialize session")
+        sess = tf.Session()
+        sess.run(tf.global_variables_initializer())
+        feed_dict = {}
+        saver = tf.train.Saver()
+        saver.restore(sess,'./model/model.ckpt')
+        feed_dict = minibatch.next_minibatch_feed_dict(placeholders=placeholders)
+        feed_dict = minibatch.update_feed_dict(
+            feed_dict=feed_dict,
+            dropout=FLAGS.dropout,
+            placeholders=placeholders)
+
+        # temporarily removed bedroc
+        roc_score, auprc_score, apk_score, labels_all, preds_all = get_accuracy_scores(feed_dict,
+            minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3], 
+            placeholders, minibatch, sess, opt, return_preds=True)
+        # roc_score, auprc_score, apk_score, bedroc = get_accuracy_scores(feed_dict,
+        #     minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3], 
+        #     placeholders, minibatch, sess, opt)
     
-    plot_roc_pr_curves(labels_all, preds_all)
+        plot_roc_pr_curves(labels_all, preds_all)
 
-    print("Edge type=", "[%02d, %02d, %02d]" % minibatch.idx2edge_type[3])
-    print("Edge type:", "%04d" % 3, "Test AUROC score", "{:.5f}".format(roc_score))
-    print("Edge type:", "%04d" % 3, "Test AUPRC score", "{:.5f}".format(auprc_score))
-    print("Edge type:", "%04d" % 3, "Test AP@k score", "{:.5f}".format(apk_score))
-    print()
+        print("Edge type=", "[%02d, %02d, %02d]" % minibatch.idx2edge_type[3])
+        print("Edge type:", "%04d" % 3, "Test AUROC score", "{:.5f}".format(roc_score))
+        print("Edge type:", "%04d" % 3, "Test AUPRC score", "{:.5f}".format(auprc_score))
+        print("Edge type:", "%04d" % 3, "Test AP@k score", "{:.5f}".format(apk_score))
+        # print("Edge type:", "%04d" % 3, "Test BEDROC score", "{:.5f}".format(bedroc))
+        print()
 
-    prediction = get_prediction(feed_dict, placeholders, minibatch, sess, opt, 
-    minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3])
+        prediction = get_prediction(feed_dict, placeholders, minibatch, sess, opt, 
+        minibatch.test_edges, minibatch.test_edges_false, minibatch.idx2edge_type[3])
 
-    print('Saving result...')
-    np.save('./result/prediction.npy', prediction)
+        print('Saving result...')
+        np.save('./result/prediction.npy', prediction)
 
+    except tf.errors.InvalidArgumentError as e:
+        print(".")
+    except AttributeError as e:
+        print(".")
 if __name__ == '__main__':
     app.run(main)
 
